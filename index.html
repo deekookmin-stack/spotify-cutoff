@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1b1f3b">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<title>Cutoff – Spotify auto-skip</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>✂️</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Schibsted+Grotesk:wght@400;600;800&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#e9ecf6; --ink:#1b1f3b; --muted:#5d6385; --panel:#ffffff; --line:#c9cde4;
+  --accent:#3d4bff; --cut:#ff5a4e; --ok:#1f8a5b;
+  box-sizing:border-box;
+  padding-top:env(safe-area-inset-top,0px); padding-bottom:env(safe-area-inset-bottom,0px);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){--bg:#12142b;--ink:#eceefc;--muted:#9aa0c9;--panel:#1b1f3b;--line:#363c6b;--accent:#8b95ff;--cut:#ff7a6e;--ok:#4cc38a}
+}
+*{box-sizing:border-box}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:"Schibsted Grotesk",system-ui,-apple-system,"Segoe UI",sans-serif;line-height:1.45;min-height:100vh}
+main{max-width:480px;margin:0 auto;padding:20px 18px 40px}
+h1{font-size:1.9rem;font-weight:800;letter-spacing:-.02em;margin:8px 0 4px}
+p{margin:0 0 12px}
+.muted{color:var(--muted);font-size:.92rem}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:16px;margin:16px 0}
+button{font:inherit;font-weight:600;border:0;border-radius:12px;padding:13px 18px;background:var(--accent);color:#fff;cursor:pointer;width:100%}
+button.ghost{background:transparent;color:var(--ink);border:1px solid var(--line)}
+button.small{width:auto;padding:8px 12px;font-size:.85rem}
+button:focus-visible,input:focus-visible{outline:3px solid var(--cut);outline-offset:2px}
+input[type=text]{width:100%;font:inherit;padding:12px;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--ink)}
+code{background:var(--bg);padding:2px 6px;border-radius:6px;font-size:.85rem;word-break:break-all}
+ol{padding-left:20px;margin:8px 0}
+li{margin-bottom:6px}
+.hidden{display:none!important}
+
+/* Now playing */
+.track{display:flex;gap:14px;align-items:center}
+.art{width:72px;height:72px;border-radius:10px;background:var(--line) center/cover;flex:none}
+.t-title{font-weight:800;font-size:1.1rem;line-height:1.2}
+.t-artist{color:var(--muted);font-size:.9rem}
+
+/* The cutoff bar — the one memorable element */
+.bar{position:relative;height:18px;border-radius:9px;background:var(--line);margin:34px 0 10px;overflow:visible}
+.fill{position:absolute;left:0;top:0;bottom:0;border-radius:9px;background:var(--accent);width:0}
+.mark{position:absolute;top:-10px;bottom:-10px;width:3px;background:var(--cut);border-radius:2px;transform:translateX(-1.5px)}
+.mark::before{content:attr(data-label);position:absolute;top:-26px;left:50%;transform:translateX(-50%);font-weight:800;font-size:.9rem;color:var(--cut);white-space:nowrap}
+.times{display:flex;justify-content:space-between;font-size:.82rem;color:var(--muted);font-variant-numeric:tabular-nums}
+input[type=range]{width:100%;accent-color:var(--cut);margin:6px 0 2px;height:32px}
+.row{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.switch{position:relative;width:54px;height:32px;flex:none}
+.switch input{opacity:0;position:absolute;inset:0;width:100%;height:100%;margin:0;cursor:pointer;z-index:1}
+.switch span{position:absolute;inset:0;background:var(--line);border-radius:16px;transition:background .2s}
+.switch span::after{content:"";position:absolute;top:4px;left:4px;width:24px;height:24px;border-radius:50%;background:#fff;transition:transform .2s}
+.switch input:checked+span{background:var(--ok)}
+.switch input:checked+span::after{transform:translateX(22px)}
+.switch input:focus-visible+span{outline:3px solid var(--cut);outline-offset:2px}
+.status{font-weight:600}
+.status.err{color:var(--cut)}
+.log{font-size:.85rem;color:var(--muted);margin:0;padding:0;list-style:none}
+.log li{padding:6px 0;border-top:1px solid var(--line)}
+.log li:first-child{border-top:0}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Cutoff</h1>
+  <p class="muted">Skips each Spotify song once it reaches the percentage you choose.</p>
+
+  <!-- Setup -->
+  <section id="setup" class="panel hidden">
+    <p><strong>One-time setup</strong></p>
+    <ol class="muted">
+      <li>Go to <code>developer.spotify.com/dashboard</code> and create an app.</li>
+      <li>Under Redirect URIs, add exactly: <code id="redir"></code>
+        <button class="ghost small" id="copyRedir" style="margin-top:6px">Copy address</button></li>
+      <li>Tick “Web API”, save, then copy the app’s Client ID below.</li>
+    </ol>
+    <input type="text" id="clientId" placeholder="Paste Client ID" autocomplete="off" autocapitalize="off" spellcheck="false">
+    <div style="height:12px"></div>
+    <button id="connect">Connect Spotify</button>
+    <p id="setupErr" class="status err" style="margin-top:10px"></p>
+  </section>
+
+  <!-- App -->
+  <section id="app" class="hidden">
+    <div class="panel">
+      <div class="row">
+        <div>
+          <div class="status" id="status">Starting…</div>
+          <div class="muted" id="sub">Play something in Spotify.</div>
+        </div>
+        <label class="switch" aria-label="Auto-skip on or off">
+          <input type="checkbox" id="enabled" checked><span></span>
+        </label>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="track">
+        <div class="art" id="art"></div>
+        <div>
+          <div class="t-title" id="title">Nothing playing</div>
+          <div class="t-artist" id="artist">–</div>
+        </div>
+      </div>
+      <div class="bar" id="bar">
+        <div class="fill" id="fill"></div>
+        <div class="mark" id="mark" data-label="60%"></div>
+      </div>
+      <div class="times"><span id="pos">0:00</span><span id="skipAt"></span><span id="dur">0:00</span></div>
+    </div>
+
+    <div class="panel">
+      <div class="row"><strong>Skip after</strong><strong id="pctLabel">60%</strong></div>
+      <input type="range" id="pct" min="5" max="95" step="1" value="60" aria-label="Skip after percent of song">
+    </div>
+
+    <div class="panel">
+      <p class="muted" style="margin-bottom:6px"><strong>Recent skips</strong></p>
+      <ul class="log" id="log"><li>None yet.</li></ul>
+    </div>
+
+    <p class="muted">Keep this page open with the screen on. Phones pause web pages in the background, which stops the skipping.</p>
+    <button class="ghost" id="logout">Disconnect</button>
+  </section>
+</main>
+
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const SCOPES = "user-read-playback-state user-modify-playback-state";
+  const REDIRECT = location.origin + location.pathname;
+  const store = {
+    get(k){ try { return localStorage.getItem(k); } catch { return null; } },
+    set(k,v){ try { localStorage.setItem(k,v); } catch {} },
+    del(k){ try { localStorage.removeItem(k); } catch {} }
+  };
+
+  /* ---------- Auth (PKCE, no server needed) ---------- */
+  const rand = n => { const a = new Uint8Array(n); crypto.getRandomValues(a);
+    return btoa(String.fromCharCode(...a)).replace(/[+/=]/g,"").slice(0,n); };
+  const sha256b64 = async s => {
+    const d = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s));
+    return btoa(String.fromCharCode(...new Uint8Array(d))).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");
+  };
+
+  async function startLogin(clientId){
+    const verifier = rand(96);
+    store.set("verifier", verifier);
+    store.set("client_id", clientId);
+    const p = new URLSearchParams({
+      client_id: clientId, response_type: "code", redirect_uri: REDIRECT,
+      scope: SCOPES, code_challenge_method: "S256", code_challenge: await sha256b64(verifier)
+    });
+    location.href = "https://accounts.spotify.com/authorize?" + p;
+  }
+
+  async function tokenRequest(body){
+    const r = await fetch("https://accounts.spotify.com/api/token", {
+      method:"POST", headers:{"Content-Type":"application/x-www-form-urlencoded"},
+      body:new URLSearchParams({client_id: store.get("client_id"), ...body})
+    });
+    if(!r.ok) throw new Error("Token request failed (" + r.status + ")");
+    const j = await r.json();
+    store.set("access", j.access_token);
+    store.set("expires", String(Date.now() + j.expires_in*1000 - 60000));
+    if(j.refresh_token) store.set("refresh", j.refresh_token);
+  }
+
+  async function handleRedirect(){
+    const q = new URLSearchParams(location.search);
+    if(q.get("error")){ history.replaceState({}, "", REDIRECT); throw new Error("Spotify said: " + q.get("error")); }
+    const code = q.get("code");
+    if(!code) return;
+    history.replaceState({}, "", REDIRECT);
+    await tokenRequest({grant_type:"authorization_code", code, redirect_uri:REDIRECT, code_verifier:store.get("verifier")});
+  }
+
+  async function token(){
+    if(Date.now() > Number(store.get("expires")||0)){
+      const rt = store.get("refresh");
+      if(!rt) throw new Error("auth");
+      await tokenRequest({grant_type:"refresh_token", refresh_token:rt});
+    }
+    return store.get("access");
+  }
+
+  async function api(path, opts={}){
+    const t = await token();
+    return fetch("https://api.spotify.com/v1" + path, {...opts, headers:{Authorization:"Bearer "+t}});
+  }
+
+  /* ---------- State ---------- */
+  let pct = Number(store.get("pct")) || 60;
+  let enabled = store.get("enabled") !== "0";
+  let np = null;            // {id,title,artist,art,dur,pos,playing,at}
+  let skippedId = null;     // track already skipped this play-through
+  let skipTimer = null;
+  let pollTimer = null;
+  let backoff = 0;
+  let wake = null;
+
+  const fmt = ms => { ms = Math.max(0, Math.round(ms/1000)); return Math.floor(ms/60) + ":" + String(ms%60).padStart(2,"0"); };
+  const livePos = () => np ? np.pos + (np.playing ? performance.now() - np.at : 0) : 0;
+  const cutMs = () => np ? np.dur * pct / 100 : 0;
+
+  function setStatus(text, sub, err){
+    $("status").textContent = text; $("status").className = "status" + (err ? " err" : "");
+    $("sub").textContent = sub || "";
+  }
+
+  /* ---------- Skipping ---------- */
+  function schedule(){
+    clearTimeout(skipTimer);
+    if(!enabled || !np || !np.playing || np.id === skippedId) return;
+    const wait = cutMs() - livePos();
+    skipTimer = setTimeout(doSkip, Math.max(0, wait));
+  }
+
+  async function doSkip(){
+    if(!enabled || !np || np.id === skippedId) return;
+    const id = np.id, name = np.title;
+    skippedId = id;
+    try{
+      const r = await api("/me/player/next", {method:"POST"});
+      if(r.status === 403){ setStatus("Spotify Premium needed", "Skipping through the API only works with Premium.", true); skippedId = null; return; }
+      if(r.status === 404){ setStatus("No active device", "Open Spotify and start playing.", true); skippedId = null; return; }
+      if(r.status === 429){ skippedId = null; backoff = Number(r.headers.get("Retry-After")||3)*1000; return; }
+      if(!r.ok){ skippedId = null; return; }
+      logSkip(name, pct);
+      setTimeout(poll, 600);
+    }catch(e){ skippedId = null; }
+  }
+
+  function logSkip(name, p){
+    const ul = $("log");
+    if(ul.children.length === 1 && ul.firstChild.textContent === "None yet.") ul.innerHTML = "";
+    const li = document.createElement("li");
+    li.textContent = new Date().toLocaleTimeString([], {hour:"numeric",minute:"2-digit"}) + " · " + name + " (at " + p + "%)";
+    ul.prepend(li);
+    while(ul.children.length > 8) ul.lastChild.remove();
+  }
+
+  /* ---------- Polling ---------- */
+  async function poll(){
+    clearTimeout(pollTimer);
+    let delay = 2000;
+    try{
+      const r = await api("/me/player?additional_types=episode");
+      if(r.status === 204){ np = null; render(); setStatus("No active device", "Open Spotify and start playing."); }
+      else if(r.status === 429){ delay = Number(r.headers.get("Retry-After")||5)*1000; }
+      else if(r.status === 401){ throw new Error("auth"); }
+      else if(r.ok){
+        const j = await r.json();
+        const it = j.item;
+        if(!it){ np = null; render(); setStatus("Nothing playing", ""); }
+        else{
+          const isNew = !np || np.id !== it.id;
+          np = {
+            id: it.id, title: it.name,
+            artist: (it.artists ? it.artists.map(a=>a.name).join(", ") : (it.show ? it.show.name : "")),
+            art: (it.album || it.show || {}).images?.[0]?.url || "",
+            dur: it.duration_ms, pos: j.progress_ms || 0, playing: !!j.is_playing, at: performance.now()
+          };
+          if(isNew && skippedId && skippedId !== it.id) skippedId = null;
+          // Same track restarted (repeat / seek back): allow a fresh skip
+          if(skippedId === np.id && np.pos < cutMs() - 3000) skippedId = null;
+          render();
+          if(!enabled) setStatus("Paused", "Auto-skip is switched off.");
+          else if(!np.playing) setStatus("Spotify is paused", "Waiting for playback…");
+          else if(np.id === skippedId) setStatus("Skipping…", "");
+          else setStatus("Watching", "Skips at " + pct + "% (" + fmt(cutMs()) + ")");
+          schedule();
+        }
+      }
+    }catch(e){
+      if(e.message === "auth"){ logout(); return; }
+      setStatus("Connection problem", "Retrying…", true);
+    }
+    pollTimer = setTimeout(poll, delay + backoff); backoff = 0;
+  }
+
+  /* ---------- UI ---------- */
+  function render(){
+    $("mark").style.left = pct + "%";
+    $("mark").dataset.label = pct + "%";
+    $("pctLabel").textContent = pct + "%";
+    $("pct").value = pct;
+    if(!np){ $("title").textContent = "Nothing playing"; $("artist").textContent = "–"; $("art").style.backgroundImage = "";
+      $("fill").style.width = "0"; $("pos").textContent = "0:00"; $("dur").textContent = "0:00"; $("skipAt").textContent = ""; return; }
+    $("title").textContent = np.title; $("artist").textContent = np.artist;
+    $("art").style.backgroundImage = np.art ? "url(" + np.art + ")" : "";
+    $("dur").textContent = fmt(np.dur);
+    $("skipAt").textContent = "skip at " + fmt(cutMs());
+  }
+
+  function tick(){
+    if(np){
+      const p = Math.min(livePos(), np.dur);
+      $("fill").style.width = (p / np.dur * 100) + "%";
+      $("pos").textContent = fmt(p);
+    }
+    requestAnimationFrame(() => setTimeout(tick, 250));
+  }
+
+  async function keepAwake(){
+    try{ if("wakeLock" in navigator && !wake && document.visibilityState === "visible"){
+      wake = await navigator.wakeLock.request("screen"); wake.addEventListener("release", () => wake = null); } }catch{}
+  }
+
+  function logout(){
+    ["access","refresh","expires","verifier"].forEach(store.del);
+    clearTimeout(pollTimer); clearTimeout(skipTimer);
+    show("setup");
+  }
+
+  function show(which){
+    $("setup").classList.toggle("hidden", which !== "setup");
+    $("app").classList.toggle("hidden", which !== "app");
+  }
+
+  /* ---------- Boot ---------- */
+  async function boot(){
+    $("redir").textContent = REDIRECT;
+    $("clientId").value = store.get("client_id") || "";
+    $("copyRedir").onclick = async () => { try{ await navigator.clipboard.writeText(REDIRECT); $("copyRedir").textContent = "Copied"; }catch{ $("copyRedir").textContent = "Select and copy above"; } };
+    $("connect").onclick = () => {
+      const id = $("clientId").value.trim();
+      if(!/^[a-f0-9]{32}$/i.test(id)){ $("setupErr").textContent = "That doesn’t look like a Client ID. It’s 32 letters and numbers."; return; }
+      startLogin(id);
+    };
+    $("logout").onclick = logout;
+    $("enabled").checked = enabled;
+    $("enabled").onchange = e => { enabled = e.target.checked; store.set("enabled", enabled ? "1" : "0");
+      if(!enabled){ clearTimeout(skipTimer); setStatus("Paused", "Auto-skip is switched off."); } else poll(); };
+    $("pct").oninput = e => { pct = Number(e.target.value); store.set("pct", String(pct)); render(); schedule(); };
+    document.addEventListener("visibilitychange", () => { if(document.visibilityState === "visible"){ keepAwake(); if(store.get("access")) poll(); } });
+
+    try{ await handleRedirect(); }catch(e){ show("setup"); $("setupErr").textContent = e.message; return; }
+
+    if(store.get("refresh") || store.get("access")){
+      show("app"); render(); tick(); keepAwake(); poll();
+    }else show("setup");
+  }
+  boot();
+})();
+</script>
+</body>
+</html>
